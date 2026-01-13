@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { fabric } from 'fabric';
 import { bentoBoxApi } from '../services/api';
+import ingredientsData from '../data/ingredients.json';
+import { getIngredientIcon } from '../utils/ingredientIcons';
+import { Ingredient } from '../types';
 
 interface SaveLoadPanelProps {
   canvas: fabric.Canvas | null;
@@ -11,6 +14,90 @@ const SaveLoadPanel = ({ canvas }: SaveLoadPanelProps) => {
   const [savedBoxes, setSavedBoxes] = useState<any[]>([]);
   const [showSaved, setShowSaved] = useState(false);
   const [message, setMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Helper function to create ingredient on canvas from saved data
+  const createIngredientFromData = (ingredientId: string, data: any) => {
+    if (!canvas) return;
+
+    const ingredientInfo = ingredientsData.find((ing: Ingredient) => ing.id === ingredientId);
+    if (!ingredientInfo) return;
+
+    const icon = getIngredientIcon(ingredientId);
+
+    const label = new fabric.Text(icon, {
+      fontSize: Math.min(ingredientInfo.width, ingredientInfo.height),
+      left: data.position.x,
+      top: data.position.y,
+      angle: data.rotation,
+      scaleX: data.scale.x,
+      scaleY: data.scale.y,
+      originX: 'center',
+      originY: 'center',
+      selectable: true,
+      hasControls: true,
+      hasBorders: true,
+      lockRotation: false,
+      cornerStyle: 'circle',
+      cornerColor: '#FF8C42',
+      cornerSize: 10,
+      transparentCorners: false,
+    });
+
+    (label as any).ingredientData = {
+      id: data.id,
+      name: data.name,
+      category: data.category,
+    };
+
+    label.set({
+      shadow: new fabric.Shadow({
+        color: 'rgba(0,0,0,0.3)',
+        blur: 5,
+        offsetX: 2,
+        offsetY: 2,
+      }),
+    });
+
+    label.on('moving', function(e) {
+      const obj = e.transform?.target;
+      if (!obj) return;
+      const bounds = (canvas as any).bentoBoxBounds;
+      if (bounds) {
+        const objLeft = obj.left || 0;
+        const objTop = obj.top || 0;
+        if (objLeft > bounds.left.x && objLeft < bounds.left.x + bounds.left.width && objTop > bounds.left.y && objTop < bounds.left.y + bounds.left.height) {
+          obj.set({ opacity: 0.8 });
+        } else if (objLeft > bounds.right.x && objLeft < bounds.right.x + bounds.right.width && objTop > bounds.right.y && objTop < bounds.right.y + bounds.right.height) {
+          obj.set({ opacity: 0.8 });
+        } else {
+          obj.set({ opacity: 1 });
+        }
+      }
+    });
+
+    label.on('mouseup', function() {
+      label.set({ opacity: 1 });
+      canvas.renderAll();
+    });
+
+    label.on('mousedblclick', function() {
+      canvas.remove(label);
+      canvas.renderAll();
+    });
+
+    canvas.add(label);
+  };
+
+  const generateThumbnail = () => {
+    if (!canvas) return '';
+    try {
+      return canvas.toDataURL({ format: 'png', quality: 0.8, multiplier: 0.3 });
+    } catch (error) {
+      console.error('Error generating thumbnail:', error);
+      return '';
+    }
+  };
 
   const saveCurrentBox = async () => {
     if (!canvas) return;
@@ -19,8 +106,8 @@ const SaveLoadPanel = ({ canvas }: SaveLoadPanelProps) => {
       return;
     }
 
+    setIsLoading(true);
     try {
-      // Get all objects from canvas
       const objects = canvas.getObjects();
       const ingredients = objects
         .filter((obj: any) => obj.ingredientData)
@@ -39,25 +126,31 @@ const SaveLoadPanel = ({ canvas }: SaveLoadPanelProps) => {
           },
         }));
 
+      const thumbnail = generateThumbnail();
+
       const response = await bentoBoxApi.create({
         name: boxName,
         ingredients,
+        thumbnail,
         isPublic: false,
       });
 
       if (response.error) {
         setMessage(`Error: ${response.error}`);
       } else {
-        setMessage('Bento box saved successfully!');
+        setMessage('✅ Bento box saved successfully!');
         setBoxName('');
         setTimeout(() => setMessage(''), 3000);
       }
     } catch (error: any) {
       setMessage(`Error: ${error.message}`);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const loadSavedBoxes = async () => {
+    setIsLoading(true);
     try {
       const response = await bentoBoxApi.getUserBoxes();
       if (response.error) {
@@ -68,32 +161,88 @@ const SaveLoadPanel = ({ canvas }: SaveLoadPanelProps) => {
       }
     } catch (error: any) {
       setMessage(`Error: ${error.message}`);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const loadBox = async (boxId: string) => {
     if (!canvas) return;
 
+    setIsLoading(true);
     try {
       const response = await bentoBoxApi.getById(boxId);
       if (response.error) {
         setMessage(`Error: ${response.error}`);
-      } else {
-        // Clear canvas first
-        const objects = canvas.getObjects();
-        objects.forEach((obj: any) => {
-          if (obj.ingredientData) {
-            canvas.remove(obj);
-          }
-        });
+        return;
+      }
 
-        // Load ingredients (simplified - would need full ingredient recreation logic)
-        setMessage('Box loaded! (Note: Full loading implementation pending)');
-        setShowSaved(false);
+      const boxData = response.data;
+
+      // Clear canvas first (only remove ingredients)
+      const objects = canvas.getObjects();
+      objects.forEach((obj: any) => {
+        if (obj.ingredientData) {
+          canvas.remove(obj);
+        }
+      });
+
+      // Recreate all ingredients
+      boxData.ingredients.forEach((ingredientData: any) => {
+        createIngredientFromData(ingredientData.id, ingredientData);
+      });
+
+      canvas.renderAll();
+      setMessage(`✅ Loaded "${boxData.name}" successfully!`);
+      setShowSaved(false);
+      setTimeout(() => setMessage(''), 3000);
+    } catch (error: any) {
+      setMessage(`Error: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const deleteBox = async (boxId: string, boxName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    if (!confirm(`Are you sure you want to delete "${boxName}"?`)) {
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await bentoBoxApi.delete(boxId);
+      if (response.error) {
+        setMessage(`Error: ${response.error}`);
+      } else {
+        setMessage(`✅ Deleted "${boxName}" successfully!`);
+        setSavedBoxes(savedBoxes.filter(box => box._id !== boxId));
+        setTimeout(() => setMessage(''), 3000);
       }
     } catch (error: any) {
       setMessage(`Error: ${error.message}`);
+    } finally {
+      setIsLoading(false);
     }
+  };
+
+  const clearCanvas = () => {
+    if (!canvas) return;
+
+    if (!confirm('Are you sure you want to clear all ingredients?')) {
+      return;
+    }
+
+    const objects = canvas.getObjects();
+    objects.forEach((obj: any) => {
+      if (obj.ingredientData) {
+        canvas.remove(obj);
+      }
+    });
+    canvas.renderAll();
+    setMessage('✅ Canvas cleared!');
+    setTimeout(() => setMessage(''), 2000);
   };
 
   return (
@@ -114,41 +263,74 @@ const SaveLoadPanel = ({ canvas }: SaveLoadPanelProps) => {
             value={boxName}
             onChange={(e) => setBoxName(e.target.value)}
             placeholder="My Amazing Bento"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-bento-orange"
+            disabled={isLoading}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-bento-orange disabled:opacity-50"
           />
         </div>
 
         <button
           onClick={saveCurrentBox}
-          className="w-full bg-bento-orange text-white py-2 px-4 rounded-lg font-semibold hover:bg-opacity-90 transition-all active:scale-95"
+          disabled={isLoading}
+          className="w-full bg-bento-orange text-white py-2 px-4 rounded-lg font-semibold hover:bg-opacity-90 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          💾 Save Current Box
+          {isLoading ? '⏳ Saving...' : '💾 Save Current Box'}
         </button>
 
         <button
           onClick={loadSavedBoxes}
-          className="w-full bg-bento-green text-white py-2 px-4 rounded-lg font-semibold hover:bg-opacity-90 transition-all active:scale-95"
+          disabled={isLoading}
+          className="w-full bg-bento-green text-white py-2 px-4 rounded-lg font-semibold hover:bg-opacity-90 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          📂 Load Saved Boxes
+          {isLoading ? '⏳ Loading...' : '📂 Load Saved Boxes'}
+        </button>
+
+        <button
+          onClick={clearCanvas}
+          disabled={isLoading}
+          className="w-full bg-red-500 text-white py-2 px-4 rounded-lg font-semibold hover:bg-red-600 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          🗑️ Clear Canvas
         </button>
 
         {showSaved && (
-          <div className="mt-4 max-h-48 overflow-y-auto">
-            <h3 className="text-sm font-semibold mb-2">Your Saved Boxes:</h3>
+          <div className="mt-4 max-h-64 overflow-y-auto border-t pt-3">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-sm font-semibold">Your Saved Boxes:</h3>
+              <button
+                onClick={() => setShowSaved(false)}
+                className="text-xs text-gray-500 hover:text-gray-700"
+              >
+                ✕ Close
+              </button>
+            </div>
             {savedBoxes.length === 0 ? (
-              <p className="text-xs text-gray-500">No saved boxes yet</p>
+              <p className="text-xs text-gray-500 text-center py-4">No saved boxes yet</p>
             ) : (
               <div className="space-y-2">
                 {savedBoxes.map((box) => (
                   <div
                     key={box._id}
-                    onClick={() => loadBox(box._id)}
-                    className="p-2 bg-bento-cream rounded border border-bento-wood cursor-pointer hover:bg-bento-rice transition-colors"
+                    className="p-2 bg-bento-cream rounded border border-bento-wood cursor-pointer hover:bg-bento-rice transition-colors group"
                   >
-                    <p className="text-sm font-semibold">{box.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {box.ingredients.length} ingredients
-                    </p>
+                    <div onClick={() => loadBox(box._id)}>
+                      {box.thumbnail && (
+                        <img
+                          src={box.thumbnail}
+                          alt={box.name}
+                          className="w-full h-24 object-cover rounded mb-2"
+                        />
+                      )}
+                      <p className="text-sm font-semibold">{box.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {box.ingredients.length} ingredients
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => deleteBox(box._id, box.name, e)}
+                      className="mt-2 w-full text-xs text-red-600 hover:text-red-800 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      🗑️ Delete
+                    </button>
                   </div>
                 ))}
               </div>
@@ -157,10 +339,16 @@ const SaveLoadPanel = ({ canvas }: SaveLoadPanelProps) => {
         )}
       </div>
 
-      <div className="mt-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-        <p className="text-xs text-gray-700">
-          ⚠️ <strong>Note:</strong> You need to be logged in to save/load boxes. This feature requires the backend server to be running with MongoDB.
+      <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+        <p className="text-xs text-gray-700 font-semibold mb-1">
+          💡 Tips:
         </p>
+        <ul className="text-xs text-gray-600 space-y-1">
+          <li>• Login to save/load boxes</li>
+          <li>• Thumbnails auto-generated</li>
+          <li>• Click box to load it</li>
+          <li>• Hover to show delete button</li>
+        </ul>
       </div>
     </div>
   );
