@@ -54,6 +54,17 @@ const IngredientPanel = ({ canvas }: IngredientPanelProps) => {
       const obj = e.transform?.target;
       if (!obj) return;
 
+      // Snap to grid (10px grid)
+      const gridSize = 10;
+      const snapEnabled = (canvas as any).snapToGrid !== false;
+
+      if (snapEnabled) {
+        obj.set({
+          left: Math.round((obj.left || 0) / gridSize) * gridSize,
+          top: Math.round((obj.top || 0) / gridSize) * gridSize,
+        });
+      }
+
       const bounds = (canvas as any).bentoBoxBounds;
       if (bounds) {
         const objLeft = obj.left || 0;

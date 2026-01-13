@@ -5,6 +5,7 @@ import BentoBox from './components/BentoBox';
 import IngredientPanel from './components/IngredientPanel';
 import SaveLoadPanel from './components/SaveLoadPanel';
 import AuthModal from './components/AuthModal';
+import ControlsPanel from './components/ControlsPanel';
 import { useAuth } from './contexts/AuthContext';
 
 function App() {
@@ -83,6 +84,7 @@ function App() {
         </footer>
       </div>
 
+      {bentoBoxReady && <ControlsPanel canvas={canvas} />}
       <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
     </div>
   );
