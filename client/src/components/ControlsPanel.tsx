@@ -123,6 +123,24 @@ const ControlsPanel = ({ canvas }: ControlsPanelProps) => {
     });
   };
 
+  // Export as image
+  const exportAsImage = () => {
+    if (!canvas) return;
+
+    const dataURL = canvas.toDataURL({
+      format: 'png',
+      quality: 1,
+      multiplier: 2,
+    });
+
+    const link = document.createElement('a');
+    link.download = `loving-lunch-${Date.now()}.png`;
+    link.href = dataURL;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // Save state on canvas modifications
   useEffect(() => {
     if (!canvas) return;
@@ -184,6 +202,16 @@ const ControlsPanel = ({ canvas }: ControlsPanelProps) => {
             <p><kbd className="px-1 py-0.5 bg-gray-100 rounded border">Ctrl+Z</kbd> Undo</p>
           </div>
         </div>
+
+        <div className="h-8 w-px bg-gray-300"></div>
+
+        {/* Export Button */}
+        <button
+          onClick={exportAsImage}
+          className="px-4 py-2 bg-bento-green text-white rounded-lg text-sm font-semibold hover:bg-opacity-90 transition-all active:scale-95"
+        >
+          📸 Export PNG
+        </button>
       </div>
     </div>
   );
